@@ -2,18 +2,136 @@
 // app.js — ColabMap | Influencer-Brand Collab Finder
 //
 // HOW IT WORKS:
-//  1. Creator enters location  → Nominatim (OSM) geocodes it to lat/lng
-//  2. Creator selects niches   → mapped to OpenStreetMap tags (brands.js)
+//  1. Creator enters location (typed address OR GPS detect)
+//  2. Creator selects niches   → mapped to OpenStreetMap tags
 //  3. Overpass API is queried  → returns REAL businesses from OSM near creator
 //  4. Results plotted on map   → Leaflet + CartoDB dark tiles
 //  5. Brand cards shown        → sorted by distance, filterable
 //  6. CSV exported on demand   → all found brands with contact info
 // ============================================================
 
+// ── Niche definitions & OpenStreetMap tag mappings ───────────
+// (All brands are searched LIVE from OSM — no hardcoded brand database)
+
+const ALL_NICHES = [
+  "Fashion", "Beauty", "Food & Beverage", "Fitness", "Tech",
+  "Travel", "Gaming", "Lifestyle", "Finance", "Education",
+  "Entertainment", "Music", "Sports"
+];
+
+// Maps each niche → list of [OSM key, OSM value] pairs to query via Overpass API
+const NICHE_TAGS = {
+  "Fashion": [
+    ["shop", "clothes"],
+    ["shop", "fashion"],
+    ["shop", "boutique"],
+    ["shop", "accessories"],
+    ["shop", "jewelry"],
+    ["shop", "shoes"],
+    ["shop", "leather"]
+  ],
+  "Beauty": [
+    ["shop", "beauty"],
+    ["shop", "cosmetics"],
+    ["amenity", "beauty_salon"],
+    ["shop", "hairdresser"],
+    ["shop", "perfumery"],
+    ["shop", "chemist"],
+    ["shop", "herbalist"]
+  ],
+  "Food & Beverage": [
+    ["amenity", "restaurant"],
+    ["amenity", "cafe"],
+    ["amenity", "bar"],
+    ["shop", "bakery"],
+    ["amenity", "fast_food"],
+    ["shop", "beverage"],
+    ["amenity", "food_court"],
+    ["shop", "confectionery"],
+    ["amenity", "ice_cream"]
+  ],
+  "Fitness": [
+    ["leisure", "fitness_centre"],
+    ["leisure", "sports_centre"],
+    ["amenity", "gym"],
+    ["shop", "sports"],
+    ["leisure", "swimming_pool"],
+    ["leisure", "yoga"]
+  ],
+  "Tech": [
+    ["shop", "electronics"],
+    ["shop", "computer"],
+    ["shop", "mobile_phone"],
+    ["office", "it"],
+    ["shop", "telephone"],
+    ["shop", "camera"]
+  ],
+  "Travel": [
+    ["tourism", "hotel"],
+    ["shop", "travel_agency"],
+    ["tourism", "hostel"],
+    ["tourism", "guest_house"],
+    ["tourism", "motel"],
+    ["amenity", "travel_agency"]
+  ],
+  "Gaming": [
+    ["shop", "games"],
+    ["leisure", "video_arcade"],
+    ["shop", "video_games"],
+    ["leisure", "amusement_arcade"]
+  ],
+  "Lifestyle": [
+    ["shop", "gift"],
+    ["shop", "interior_decoration"],
+    ["shop", "home"],
+    ["shop", "furniture"],
+    ["shop", "florist"],
+    ["shop", "stationery"],
+    ["shop", "art"]
+  ],
+  "Finance": [
+    ["amenity", "bank"],
+    ["office", "financial"],
+    ["amenity", "bureau_de_change"],
+    ["office", "insurance"],
+    ["amenity", "atm"]
+  ],
+  "Education": [
+    ["amenity", "school"],
+    ["amenity", "college"],
+    ["amenity", "university"],
+    ["office", "educational_institution"],
+    ["shop", "books"],
+    ["amenity", "library"]
+  ],
+  "Entertainment": [
+    ["amenity", "cinema"],
+    ["amenity", "theatre"],
+    ["leisure", "amusement_arcade"],
+    ["amenity", "nightclub"],
+    ["leisure", "escape_game"],
+    ["amenity", "arts_centre"]
+  ],
+  "Music": [
+    ["shop", "music"],
+    ["amenity", "music_venue"],
+    ["shop", "musical_instrument"],
+    ["amenity", "nightclub"]
+  ],
+  "Sports": [
+    ["shop", "sports"],
+    ["leisure", "stadium"],
+    ["leisure", "sports_centre"],
+    ["leisure", "golf_course"],
+    ["leisure", "pitch"]
+  ]
+};
+
 // ── App State ───────────────────────────────────────────────
 const state = {
   creatorLat:    null,
   creatorLng:    null,
+  creatorLocationLabel: '', // human-readable label for map popup
   matchedBrands: [],       // processed brand objects from Overpass
   map:           null,     // Leaflet map instance
   creatorMarker: null,
@@ -29,12 +147,83 @@ document.addEventListener('DOMContentLoaded', () => {
   buildNicheCheckboxes();
   setupSlider();
   setupFilters();
+  setupLocationInput();
   $('find-btn').addEventListener('click', handleSearch);
   $('csv-btn').addEventListener('click', exportCSV);
 
   // Show initial empty state
   showEmptyState('Ready to find your collabs?', 'Enter your location and niches, then click "Find Brand Collabs".');
 });
+
+// ── Location input & GPS detect ─────────────────────────────
+function setupLocationInput() {
+  const gpsBtn = $('gps-btn');
+  if (!gpsBtn) return;
+
+  gpsBtn.addEventListener('click', () => {
+    if (!navigator.geolocation) {
+      showToast('⚠️ Geolocation is not supported by your browser.', 'warn');
+      return;
+    }
+
+    gpsBtn.disabled = true;
+    gpsBtn.textContent = '⏳ Detecting…';
+    gpsBtn.classList.add('gps-loading');
+
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+
+        // Reverse geocode to get a human-readable label
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
+            { headers: { 'Accept-Language': 'en', 'User-Agent': 'ColabMap-InfluencerBrandFinder/1.0' } }
+          );
+          const data = await res.json();
+          const label = data.display_name
+            ? data.display_name.split(',').slice(0, 3).join(',').trim()
+            : `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+          $('location-input').value = label;
+          // Pre-fill hidden coords so user doesn't need to geocode again
+          state._gpsLat = lat;
+          state._gpsLng = lng;
+          state._gpsLabel = label;
+          showToast('📍 Location detected successfully!', 'success');
+        } catch {
+          $('location-input').value = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+          state._gpsLat = lat;
+          state._gpsLng = lng;
+          state._gpsLabel = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+          showToast('📍 GPS coordinates captured!', 'success');
+        }
+
+        gpsBtn.disabled = false;
+        gpsBtn.textContent = '📍 Use My Location';
+        gpsBtn.classList.remove('gps-loading');
+      },
+      (err) => {
+        let msg = '❌ Could not get your location.';
+        if (err.code === 1) msg = '🔒 Location permission denied. Please allow access or type your address.';
+        if (err.code === 2) msg = '📡 Location unavailable. Please type your address manually.';
+        if (err.code === 3) msg = '⏱️ Location request timed out. Please try again.';
+        showToast(msg, 'warn');
+        gpsBtn.disabled = false;
+        gpsBtn.textContent = '📍 Use My Location';
+        gpsBtn.classList.remove('gps-loading');
+      },
+      { timeout: 10000, enableHighAccuracy: false }
+    );
+  });
+
+  // If user manually types, clear saved GPS coords
+  $('location-input').addEventListener('input', () => {
+    state._gpsLat = null;
+    state._gpsLng = null;
+    state._gpsLabel = null;
+  });
+}
 
 // ── Build niche checkboxes ───────────────────────────────────
 function buildNicheCheckboxes() {
@@ -88,12 +277,12 @@ function getSelectedNiches() {
 //  MAIN SEARCH
 // ════════════════════════════════════════════════════════════
 async function handleSearch() {
-  const location      = $('location-input').value.trim();
+  const locationText   = $('location-input').value.trim();
   const selectedNiches = getSelectedNiches();
-  const radiusKm      = parseFloat($('radius-slider').value);
+  const radiusKm       = parseFloat($('radius-slider').value);
 
   // Validate
-  if (!location)              { showToast('⚠️ Please enter your location.', 'warn'); return; }
+  if (!locationText)          { showToast('⚠️ Please enter your location or use GPS detection.', 'warn'); return; }
   if (!selectedNiches.length) { showToast('⚠️ Select at least one niche.', 'warn'); return; }
 
   setLoading(true);
@@ -101,27 +290,41 @@ async function handleSearch() {
   $('csv-btn').disabled  = true;
 
   try {
-    // ── Step 1: Geocode creator location ──────────────────
-    updateStatus('📍 Locating you on the map…');
-    const coords = await geocodeLocation(location);
-    if (!coords) {
-      showToast('❌ Location not found. Try a city name like "Mumbai" or "Delhi".', 'error');
-      setLoading(false); $('find-btn').disabled = false; return;
+    let lat, lng, displayLabel;
+
+    // If user used GPS button, reuse saved coords (skip geocoding)
+    if (state._gpsLat && state._gpsLng) {
+      lat = state._gpsLat;
+      lng = state._gpsLng;
+      displayLabel = state._gpsLabel || locationText;
+    } else {
+      // ── Step 1: Geocode creator location ──────────────────
+      updateStatus('📍 Locating you on the map…');
+      const coords = await geocodeLocation(locationText);
+      if (!coords) {
+        showToast('❌ Location not found. Try a city name like "Mumbai" or "Delhi".', 'error');
+        setLoading(false); $('find-btn').disabled = false; return;
+      }
+      lat = coords.lat;
+      lng = coords.lng;
+      displayLabel = locationText;
     }
-    state.creatorLat = coords.lat;
-    state.creatorLng = coords.lng;
+
+    state.creatorLat = lat;
+    state.creatorLng = lng;
+    state.creatorLocationLabel = displayLabel;
 
     // ── Step 2: Query Overpass for real brands ────────────
-    updateStatus(`🔍 Searching OpenStreetMap for nearby brands…`);
-    const rawElements = await fetchBrandsFromOSM(coords.lat, coords.lng, radiusKm, selectedNiches);
+    updateStatus(`🔍 Searching OpenStreetMap for nearby brands within ${radiusKm} km…`);
+    const rawElements = await fetchBrandsFromOSM(lat, lng, radiusKm, selectedNiches);
 
     // ── Step 3: Process results ───────────────────────────
     updateStatus(`⚙️ Processing ${rawElements.length} locations found…`);
-    state.matchedBrands = processOSMResults(rawElements, coords.lat, coords.lng, selectedNiches);
+    state.matchedBrands = processOSMResults(rawElements, lat, lng, selectedNiches);
 
     // ── Step 4: Render map ────────────────────────────────
     updateStatus('🗺️ Drawing map…');
-    renderMap(coords.lat, coords.lng, location, radiusKm);
+    renderMap(lat, lng, displayLabel, radiusKm);
 
     // ── Step 5: Render cards ──────────────────────────────
     renderCards();
@@ -135,7 +338,7 @@ async function handleSearch() {
     $('csv-btn-top').disabled = state.matchedBrands.length === 0;
 
     const msg = state.matchedBrands.length > 0
-      ? `✅ Found ${state.matchedBrands.length} real brand(s) near ${location}!`
+      ? `✅ Found ${state.matchedBrands.length} real brand(s) within ${radiusKm} km of ${displayLabel}!`
       : `😕 No matching businesses found within ${radiusKm} km. Try a larger radius or different niches.`;
     showToast(msg, state.matchedBrands.length > 0 ? 'success' : 'warn');
 
@@ -381,7 +584,7 @@ function renderMap(lat, lng, locationName, radiusKm) {
     .bindPopup(`
       <div class="popup-name">⭐ ${creatorName}</div>
       <div class="popup-niche">📍 ${locationName}</div>
-      <div class="popup-detail">Creator Location · Radius: ${radiusKm} km</div>
+      <div class="popup-detail">Creator Location · Search Radius: ${radiusKm} km</div>
     `, { maxWidth: 260 });
 
   // Brand pins (color by type)

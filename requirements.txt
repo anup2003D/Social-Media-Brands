@@ -1,0 +1,7 @@
+# ColabMap — Python dependencies
+# All current dependencies are Python standard library (no pip install needed).
+# Add future packages below as the project grows.
+
+# Example future additions:
+# flask==3.0.3          # if switching to Flask server
+# requests==2.31.0      # if adding backend API calls

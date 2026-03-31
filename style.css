@@ -233,6 +233,67 @@ body::before {
   border-color: var(--border-hover);
 }
 
+/* ── Location picker ── */
+.location-input-wrap {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.location-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-gps {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(6,182,212,0.35);
+  background: rgba(6,182,212,0.08);
+  color: var(--accent-2);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition);
+}
+
+.btn-gps:hover {
+  background: rgba(6,182,212,0.18);
+  border-color: rgba(6,182,212,0.6);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(6,182,212,0.2);
+}
+
+.btn-gps:active { transform: translateY(0); }
+
+.btn-gps:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-gps.gps-loading {
+  animation: gpspulse 1s ease-in-out infinite;
+}
+
+@keyframes gpspulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+.location-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-top: -2px;
+}
+
 /* ── Creator name input ── */
 .creator-row {
   display: grid;

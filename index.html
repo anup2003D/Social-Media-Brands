@@ -103,13 +103,21 @@
             <label class="field-label" for="location-input">
               📍 Your Location <span class="field-required">*</span>
             </label>
-            <input
-              id="location-input"
-              class="field-input"
-              type="text"
-              placeholder="e.g. Mumbai, Bengaluru, New Delhi…"
-              autocomplete="off"
-            />
+            <div class="location-input-wrap">
+              <input
+                id="location-input"
+                class="field-input location-field"
+                type="text"
+                placeholder="Type your city, area, or full address…"
+                autocomplete="off"
+              />
+              <button id="gps-btn" class="btn-gps" title="Auto-detect my location">
+                📍 Use My Location
+              </button>
+            </div>
+            <div class="location-hint">
+              🗺️ The map will search for brands within your chosen radius around this location.
+            </div>
           </div>
 
           <!-- Radius slider -->
@@ -271,9 +279,7 @@
   <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN/WLs=" crossorigin=""></script>
-  <!-- Brand dataset -->
-  <script src="brands.js"></script>
-  <!-- App logic -->
+  <!-- App logic (includes all niche/tag definitions — no separate brand DB file) -->
   <script src="app.js"></script>
 
   <!-- Sync second CSV button disabled state -->
