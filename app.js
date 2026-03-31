@@ -51,12 +51,20 @@ const NICHE_TAGS = {
     ["amenity", "ice_cream"]
   ],
   "Fitness": [
-    ["leisure", "fitness_centre"],
+    ["leisure", "fitness_centre"],   // standard international tag
     ["leisure", "sports_centre"],
+    ["leisure", "gym"],               // non-standard but widely used
     ["amenity", "gym"],
-    ["shop", "sports"],
+    ["amenity", "fitness_centre"],    // non-standard but used in India
+    ["sport",   "fitness"],           // used by some Indian mappers
+    ["sport",   "gym"],
+    ["sport",   "yoga"],
+    ["shop",    "sports"],
     ["leisure", "swimming_pool"],
-    ["leisure", "yoga"]
+    ["leisure", "yoga"],
+    ["leisure", "dance"],
+    ["leisure", "martial_arts"],
+    ["amenity", "leisure_centre"]
   ],
   "Tech": [
     ["shop", "electronics"],
@@ -405,23 +413,56 @@ function buildOverpassQuery(lat, lng, radiusM, selectedNiches) {
 
   if (!parts.length) return null;
 
-  // out center → gives centroid for ways, body for nodes
-  return `[out:json][timeout:30];\n(\n${parts.join('\n')}\n);\nout body center qt;`;
+  // 60s timeout — complex multi-niche queries can be slow
+  return `[out:json][timeout:60];\n(\n${parts.join('\n')}\n);\nout body center qt;`;
 }
+
+// Multiple Overpass mirrors — tried in order until one succeeds
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
+];
 
 async function fetchBrandsFromOSM(lat, lng, radiusKm, selectedNiches) {
   const query = buildOverpassQuery(lat, lng, radiusKm * 1000, selectedNiches);
   if (!query) return [];
 
-  const res = await fetch('https://overpass-api.de/api/interpreter', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'data=' + encodeURIComponent(query)
-  });
+  let lastError;
 
-  if (!res.ok) throw new Error(`Overpass error: ${res.status}`);
-  const data = await res.json();
-  return data.elements || [];
+  for (let i = 0; i < OVERPASS_ENDPOINTS.length; i++) {
+    const endpoint = OVERPASS_ENDPOINTS[i];
+    updateStatus(`🔍 Querying map data… (attempt ${i + 1}/${OVERPASS_ENDPOINTS.length})`);
+    console.log(`[ColabMap] Trying Overpass endpoint ${i + 1}: ${endpoint}`);
+
+    // 65-second fetch timeout (slightly longer than the query timeout)
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 65000);
+
+    try {
+      const res = await fetch(endpoint, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body:    'data=' + encodeURIComponent(query),
+        signal:  controller.signal
+      });
+      clearTimeout(timer);
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      console.log(`[ColabMap] Got ${data.elements?.length ?? 0} elements from OSM.`);
+      return data.elements || [];
+
+    } catch (err) {
+      clearTimeout(timer);
+      lastError = err;
+      const reason = err.name === 'AbortError' ? 'timed out' : err.message;
+      console.warn(`[ColabMap] Endpoint ${i + 1} failed (${reason}), trying next…`);
+    }
+  }
+
+  // All endpoints failed
+  throw new Error(`All Overpass endpoints failed. Last error: ${lastError?.message}`);
 }
 
 // ════════════════════════════════════════════════════════════
@@ -430,15 +471,16 @@ async function fetchBrandsFromOSM(lat, lng, radiusKm, selectedNiches) {
 function processOSMResults(elements, creatorLat, creatorLng, selectedNiches) {
   const seen = new Set();
   const results = [];
+  let skippedNoName = 0, skippedNoCoords = 0, skippedNoNiche = 0;
 
   elements.forEach(el => {
     const t = el.tags || {};
-    if (!t.name) return; // skip unnamed elements
+    if (!t.name) { skippedNoName++; return; } // skip unnamed elements
 
     // Get lat/lng (nodes have lat/lon directly; ways have a center object)
     const lat = el.type === 'node' ? el.lat : (el.center ? el.center.lat : null);
     const lng = el.type === 'node' ? el.lon : (el.center ? el.center.lon : null);
-    if (!lat || !lng) return;
+    if (!lat || !lng) { skippedNoCoords++; return; }
 
     // Dedup by name + approximate location
     const dedupKey = `${t.name}__${lat.toFixed(3)}__${lng.toFixed(3)}`;
@@ -446,9 +488,9 @@ function processOSMResults(elements, creatorLat, creatorLng, selectedNiches) {
     seen.add(dedupKey);
 
     // Determine which niches this business matches
-    const detectedNiches   = detectNiches(t);
-    const matchedNiches    = detectedNiches.filter(n => selectedNiches.includes(n));
-    if (!matchedNiches.length) return;
+    const detectedNiches = detectNiches(t);
+    const matchedNiches  = detectedNiches.filter(n => selectedNiches.includes(n));
+    if (!matchedNiches.length) { skippedNoNiche++; return; }
 
     // Classify brand type using OSM brand tags
     let type = 'Local';
