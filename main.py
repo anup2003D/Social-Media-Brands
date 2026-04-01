@@ -129,7 +129,7 @@ def open_browser(port):
 
 
 if __name__ == '__main__':
-    PORT = 8080
+    PORT = 5000
     print(f"\n✅  ColabMap is running!")
     print(f"🌐  Open this in your browser → http://localhost:{PORT}")
     print(f"🔑  Using Foursquare API key from .env")

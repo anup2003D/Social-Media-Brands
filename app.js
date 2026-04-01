@@ -96,6 +96,7 @@ function setupLocationInput() {
           state._gpsLabel = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
         }
         showToast('📍 Location detected!', 'success');
+        previewLocation(lat, lng, state._gpsLabel);
         gpsBtn.disabled = false; gpsBtn.textContent = '📍 Use My Location';
         gpsBtn.classList.remove('gps-loading');
       },
@@ -109,9 +110,52 @@ function setupLocationInput() {
     );
   });
 
+  // Reset GPS cache on manual type
   $('location-input').addEventListener('input', () => {
     state._gpsLat = state._gpsLng = state._gpsLabel = null;
   });
+
+  // Preview map on Enter or blur (tab away) from address field
+  async function tryPreviewAddress() {
+    const val = $('location-input').value.trim();
+    if (!val || state._gpsLat) return; // skip if empty or GPS already used
+    const coords = await geocodeLocation(val);
+    if (coords) previewLocation(coords.lat, coords.lng, val);
+  }
+  $('location-input').addEventListener('keydown', e => { if (e.key === 'Enter') tryPreviewAddress(); });
+  $('location-input').addEventListener('blur', tryPreviewAddress);
+}
+
+// ── Preview map as soon as we know the location ───────────────
+function previewLocation(lat, lng, label) {
+  $('map-placeholder').style.display = 'none';
+  $('map').style.display = 'block';
+
+  if (!state.map) {
+    state.map = L.map('map', { zoomControl: true });
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/">CARTO</a>',
+      subdomains: 'abcd', maxZoom: 19
+    }).addTo(state.map);
+  }
+
+  // Remove old creator marker
+  if (state.creatorMarker) state.map.removeLayer(state.creatorMarker);
+
+  const creatorIcon = L.divIcon({
+    className: '',
+    html: `<div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#7c3aed,#06b6d4);display:flex;align-items:center;justify-content:center;font-size:20px;box-shadow:0 0 20px rgba(124,58,237,0.8);border:3px solid rgba(255,255,255,0.3);animation:pulsePin 2s ease-in-out infinite;">⭐</div>`,
+    iconSize: [40, 40], iconAnchor: [20, 20]
+  });
+
+  const creatorName = $('creator-name').value.trim() || 'You (Creator)';
+  state.creatorMarker = L.marker([lat, lng], { icon: creatorIcon, zIndexOffset: 9999 })
+    .addTo(state.map)
+    .bindPopup(`<b>⭐ ${creatorName}</b><br>📍 ${label || 'Your Location'}`, { maxWidth: 260 })
+    .openPopup();
+
+  state.map.setView([lat, lng], 14);
+  state.creatorLat = lat; state.creatorLng = lng; state.creatorLabel = label || '';
 }
 
 // ── Build niche checkboxes ───────────────────────────────────
